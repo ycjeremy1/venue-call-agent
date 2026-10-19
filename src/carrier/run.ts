@@ -27,6 +27,9 @@ import { audioCall, percentiles } from './call.ts';
 import type { AudioReport } from './call.ts';
 import { audioChecks, audioControl } from './checks.ts';
 import type { VadSettings } from './vad.ts';
+import { loadConfig } from '../config.ts';
+import { callResultPayload, createNotifier } from '../notify/n8n.ts';
+import type { CallResultPayload, Delivery } from '../notify/n8n.ts';
 
 function arg(name: string): string | undefined {
     const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -86,7 +89,49 @@ export function summarise(reports: readonly AudioReport[]) {
     };
 }
 
+type CallRow = Awaited<ReturnType<typeof runCalls>>[number];
+
+/** Which checks a call failed, by severity. Skipped transcript checks are not failures. */
+export function failuresOf(row: CallRow): { hard: string[]; soft: string[] } {
+    const failed = (severity: 'hard' | 'soft') => [
+        ...row.checks.filter((c) => c.severity === severity && !c.passed).map((c) => c.id),
+        ...row.score.checks.filter((c) => c.severity === severity && !c.passed && !c.skipped).map((c) => c.name),
+    ];
+    return { hard: failed('hard'), soft: failed('soft') };
+}
+
+/** One POST per call, in order. Sequential so a slow workflow sees them in the order they ran. */
+export async function notifyN8n(
+    rows: readonly CallRow[],
+    agent: string,
+    send: (payload: CallResultPayload) => Promise<Delivery>,
+): Promise<Delivery[]> {
+    const deliveries: Delivery[] = [];
+    for (const row of rows) {
+        const { hard, soft } = failuresOf(row);
+        deliveries.push(await send(callResultPayload({
+            fixture: row.fixture,
+            agent,
+            transcript: row.transcript,
+            audio: row.audio,
+            hardFailures: hard,
+            softFailures: soft,
+        })));
+    }
+    return deliveries;
+}
+
 if (isEntryPoint(import.meta.url)) {
+    // Before the controls and before any call: a bad webhook URL is a typo to fix now, not a
+    // surprise after every call has already run.
+    let config;
+    try {
+        config = loadConfig();
+    } catch (error) {
+        console.error((error as Error).message);
+        process.exit(64);
+    }
+
     // 🔴 The control, before any number is printed. Same law as the eval: a grader that cannot
     // catch a planted fault reports every call as fine, and somebody quotes it.
     const brokenAudio = audioControl();
@@ -154,14 +199,7 @@ if (isEntryPoint(import.meta.url)) {
     let soft = 0;
     for (const row of rows) {
         const a = row.audio;
-        const failedHard = [
-            ...row.checks.filter((c) => c.severity === 'hard' && !c.passed).map((c) => c.id),
-            ...row.score.checks.filter((c) => c.severity === 'hard' && !c.passed && !c.skipped).map((c) => c.name),
-        ];
-        const failedSoft = [
-            ...row.checks.filter((c) => c.severity === 'soft' && !c.passed).map((c) => c.id),
-            ...row.score.checks.filter((c) => c.severity === 'soft' && !c.passed && !c.skipped).map((c) => c.name),
-        ];
+        const { hard: failedHard, soft: failedSoft } = failuresOf(row);
         hard += failedHard.length;
         soft += failedSoft.length;
 
@@ -187,6 +225,14 @@ if (isEntryPoint(import.meta.url)) {
     console.log(`  dead air  p50 ${s.pct.p50 ?? 0}ms · p90 ${s.pct.p90 ?? 0}ms · p99 ${s.pct.p99 ?? 0}ms · max ${s.max}ms   (no mean, on purpose)`);
     console.log(`  talk-over ${s.talkOver} frame(s) · over-segmented ${s.overSegmented} · after hangup ${s.afterHangup}`);
     console.log(`\n${hard} hard failure(s) · ${soft} soft failure(s)`);
+
+    // After the verdict, never before it: a webhook cannot influence a score it has not seen.
+    if (config.n8nWebhookUrl) {
+        const deliveries = await notifyN8n(rows, agentKind, createNotifier({ url: config.n8nWebhookUrl }));
+        const failed = deliveries.filter((d) => !d.ok);
+        console.log(`\n  n8n: ${deliveries.length - failed.length}/${deliveries.length} call result(s) delivered`);
+        for (const d of failed) console.error(`  n8n: NOT delivered — ${d.fixture}: ${d.detail}`);
+    }
 
     if (hard) {
         console.error('\nA hard failure is something a call must never do. See src/carrier/checks.ts');

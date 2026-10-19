@@ -79,6 +79,13 @@ const ENV_REGISTER = [
         blocksWhenAbsent: null,
     },
     {
+        name: 'N8N_WEBHOOK_URL',
+        klass: 'local',
+        unlocks: 'npm run call POSTs each call result (marked simulated) to an n8n Webhook node',
+        source: 'you choose it; the Production URL of the Webhook trigger in your own n8n workflow',
+        blocksWhenAbsent: null,
+    },
+    {
         name: 'VENUE_CALL_SECRET',
         klass: 'real-backend',
         unlocks: 'minting a call token a REAL platform-backend will accept',

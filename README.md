@@ -108,6 +108,7 @@ spec to satisfy.
 | `npm run eval` | every recorded conversation, scored against the rubric | nothing |
 | `npm run call` | the same ones as telephone calls: dead air per turn, talking over an interrupt, audio after hangup | nothing |
 | `npm run call -- --sweep=200,400,600,800,1000,1200` | what each turn-detector setting costs — `docs/TUNING.md` §3.3, as a command | nothing |
+| `N8N_WEBHOOK_URL=… npm run call` | the same calls, each result POSTed to an n8n Webhook node, marked simulated — `docs/N8N.md` | an n8n workflow of your own |
 | `npm run mock` | a local Seam 4 on :8788 you can curl | nothing |
 | `npm run mint-token -- --all` | a valid token, an expired one, one for the wrong booking and one for the wrong attempt | a signing literal you invent — bash: `VENUE_CALL_SECRET=anything npm run mint-token -- --all`; PowerShell: `$env:VENUE_CALL_SECRET='anything'; npm run mint-token -- --all`. It exits 64 and tells you so if you forget |
 | `npm run check:no-facts` | no product fact is hardcoded here | nothing |

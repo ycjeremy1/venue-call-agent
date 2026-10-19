@@ -18,6 +18,8 @@
  * estate has already made once. `readFlag` below is the only sanctioned way to read one.
  */
 
+import { parseWebhookUrl } from './notify/n8n.ts';
+
 /** Everything the local path needs. Every field has a working default. */
 export interface Config {
     /** Where the backend lives. Defaults to the in-repo mock. */
@@ -26,6 +28,8 @@ export interface Config {
     port: number;
     /** Shared literal that signs the call token. Empty locally; the mock does not check it. */
     venueCallSecret: string;
+    /** Where `npm run call` POSTs each call's result. Empty means send nothing. See src/notify/n8n.ts. */
+    n8nWebhookUrl: string;
 }
 
 /** The credentials a real model session needs, and nothing else does. */
@@ -60,10 +64,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             'Leave it unset for 8787.',
         );
     }
+    const rawWebhook = trimmed(env, 'N8N_WEBHOOK_URL');
+    let n8nWebhookUrl = '';
+    if (rawWebhook) {
+        try {
+            n8nWebhookUrl = parseWebhookUrl(rawWebhook);
+        } catch (error) {
+            throw new Error(`venue-call-agent refuses to start. ${(error as Error).message}`);
+        }
+    }
     return {
         apiBaseUrl: trimmed(env, 'CREATORAIN_API_BASE_URL') || DEFAULT_API_BASE_URL,
         port,
         venueCallSecret: trimmed(env, 'VENUE_CALL_SECRET'),
+        n8nWebhookUrl,
     };
 }
 
